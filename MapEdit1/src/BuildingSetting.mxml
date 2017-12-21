@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Group xmlns:fx="http://ns.adobe.com/mxml/2009" 
+		  xmlns:s="library://ns.adobe.com/flex/spark" 
+		  xmlns:mx="library://ns.adobe.com/flex/mx" width="1100" height="800" initialize="group1_initializeHandler(event)">
+	<s:layout>
+		<s:BasicLayout/>
+	</s:layout>
+
+	<fx:Script>
+		<![CDATA[
+			import mx.controls.Alert;
+			import mx.events.FlexEvent;
+			import mx.managers.PopUpManager;
+			
+			public var callback:Function;
+			
+			protected function button1_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				var w:int = int(widthValue.text);
+				var h:int = int(heightValue.text);
+				if((w%MapData.instance.gridWidth == 0) && (h%MapData.instance.gridHeight == 0))
+				{
+					PopUpManager.removePopUp(this);
+					MapData.instance.mapWidth = w;
+					MapData.instance.mapHeight = h;
+					if(callback != null)
+					{
+						callback();
+					}
+				}else
+				{
+					Alert.show("长宽数据错误","错误");
+				}
+			}
+
+			protected function group1_initializeHandler(event:FlexEvent):void
+			{
+				// TODO Auto-generated method stub
+				widthValue.text = MapData.instance.mapWidth.toString();
+				heightValue.text = MapData.instance.mapHeight.toString();
+			}
+
+		]]>
+	</fx:Script>
+
+	<fx:Declarations>
+		<!-- 将非可视元素（例如服务、值对象）放在此处 -->
+	</fx:Declarations>
+	<s:Label x="377" y="310" text="宽度:(40的倍数):"/>
+	<s:Label x="375" y="348" text="高度:(40的倍数):"/>
+	<s:TextInput x="485" y="305" id="widthValue"/>
+	<s:TextInput x="487" y="340" id="heightValue"/>
+	<s:Button x="487" y="434" label="确定" click="button1_clickHandler(event)"/>
+</s:Group>

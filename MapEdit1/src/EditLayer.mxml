@@ -1,0 +1,861 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Group xmlns:fx="http://ns.adobe.com/mxml/2009" 
+		 xmlns:s="library://ns.adobe.com/flex/spark" 
+		 xmlns:mx="library://ns.adobe.com/flex/mx" width="100%" height="100%" initialize="group1_initializeHandler(event)" enterFrame="group1_enterFrameHandler(event)">
+	<s:layout>
+		<s:BasicLayout/>
+	</s:layout>
+	<fx:Script>
+		<![CDATA[
+			import flash.filters.GlowFilter;
+			
+			import mx.collections.ArrayCollection;
+			import mx.containers.TitleWindow;
+			import mx.controls.Alert;
+			import mx.core.INavigatorContent;
+			import mx.events.CloseEvent;
+			import mx.events.FlexEvent;
+			import mx.graphics.codec.PNGEncoder;
+			import mx.managers.PopUpManager;
+			
+			import spark.components.Panel;
+			import spark.effects.Scale;
+			import spark.primitives.Rect;
+
+			private var _layer:Array = [];
+			private var _layerData:Array = [];
+			private var _buttons:Array = [];
+			private var container:Sprite;
+			private var _realWidth:int;
+			
+			private var _layerWidth:int = 800;
+			
+			private var layersDisplay:Sprite;
+			
+			private var rangeLayer:Sprite;
+			private var _rangeStart:Point;
+			
+			private var grid:Bitmap;
+			private var position:Bitmap;
+			
+			private static const LAYERNAMES:Array = ["海洋","陆地1","陆地2","陆地3","草皮","树木"];
+			private static const LAYERTOOLTIP:Array = ["海洋","陆地/水池","陆地/水池","陆地/水池","草皮","树木/房子/道路/山洞"];
+			
+			protected function group1_initializeHandler(event:FlexEvent):void
+			{
+				var ss:Sprite = this;
+				stage.nativeWindow.addEventListener(Event.CLOSING,function(e1:Event):void
+				{
+					e1.preventDefault();
+					Alert.show("Do you want to save your changes?", "Save Changes", Alert.YES|Alert.NO,ss,function(e:CloseEvent):void
+					{
+						if(e.detail == Alert.YES)
+						{
+							button3_clickHandler();
+						}else
+						{
+							stage.nativeWindow.close();
+						}
+					});
+				});
+				
+				_layerWidth = MapData.instance.mapWidth;
+				var width:int = int(_layerWidth*MapData.instance.gridWidth/MapData.instance.mapWidth);
+				_realWidth = width;
+				container = new Sprite();
+				container.x = 10;
+				container.y = 10;
+				uic.addChild(container);
+				
+				layersDisplay = new Sprite();
+				container.addChild(layersDisplay);
+				// TODO Auto-generated method stub
+				for(var i:int = 0;i<MapData.instance.mapLayer;i++)
+				{
+					var button:Button = new Button();
+					if(i<LAYERNAMES.length)
+					{
+						button.toolTip = LAYERTOOLTIP[i];
+						button.label = LAYERNAMES[i];
+					}else
+					{
+						button.toolTip = button.label = "第"+(i+1)+"层";
+					}
+					group1.addElement(button);
+					_buttons.push(button);
+					button.addEventListener(MouseEvent.CLICK,showLayer);
+					var layer:Bitmap = new Bitmap(new BitmapData(width*(MapData.instance.mapWidth/MapData.instance.gridWidth),width*(MapData.instance.mapHeight/MapData.instance.gridHeight),true,0x0));
+					_layer.push(layer);
+					layersDisplay.addChild(layer);
+					if(MapData.instance.havePassableLayer)
+					{
+						if(i == MapData.instance.mapLayer-1)
+						{
+							button.toolTip = "此层使用红绿图块，红色不可走，绿色可走。";
+							button.label = "阻挡层";
+							layer.alpha = 0.2;
+							
+							var hidebutton:Button = new Button();
+							hidebutton.label = "藏";
+							hidebutton.toolTip = "此按钮用来隐藏红绿图层";
+							group1.addElement(hidebutton);
+							hidebutton.addEventListener(MouseEvent.CLICK,function(e:Event):void
+							{
+								(_layer[_layer.length-1] as Bitmap).visible = !(_layer[_layer.length-1] as Bitmap).visible;
+							});
+						}
+					}
+					_layerData.push(new OneLayerData(MapData.instance.mapWidth/MapData.instance.gridWidth,MapData.instance.mapHeight/MapData.instance.gridHeight));
+				}
+				grid = new Bitmap(new BitmapData(width*(MapData.instance.mapWidth/MapData.instance.gridWidth),width*(MapData.instance.mapHeight/MapData.instance.gridHeight),true,0x88ffffff));
+				position = new Bitmap(new BitmapData(width*(MapData.instance.mapWidth/MapData.instance.gridWidth),width*(MapData.instance.mapHeight/MapData.instance.gridHeight),true,0x0));
+				for(var k:int = 0;k<MapData.instance.mapWidth/MapData.instance.gridWidth;k++)
+				{
+					for(var j:int = 0;j<MapData.instance.mapHeight/MapData.instance.gridHeight;j++)
+					{
+						var t:TextField = new TextField();
+						t.width = t.height = width-1;
+						t.text = k+","+j;
+						t.setTextFormat(new TextFormat(null,null,0xffffff,2));
+						
+						grid.bitmapData.fillRect(new Rectangle(k*width,j*width,width-1,width-1),0x0);
+						position.bitmapData.draw(t,new Matrix(1,0,0,1,k*width+5,j*width+10));
+						
+					}
+				}
+				container.addChild(grid);
+				position.filters = [new GlowFilter(0x0,1,2,2,32)];
+				container.addChild(position);
+				rangeLayer = new Sprite();
+				container.addChild(rangeLayer);
+				rangeLayer.mouseChildren = rangeLayer.mouseEnabled = false;
+//				(_buttons[0] as Button).enabled = false;
+//				layersDisplay.addChild(_layer[0] as Bitmap);
+				
+				var all:Button = new Button();
+				all.label = "所有层";
+				group1.addElement(all);
+				all.addEventListener(MouseEvent.CLICK,showAll);
+				_buttons.push(all);
+				all.enabled = false;
+				selectedLayer = -1;
+				
+				container.addEventListener(MouseEvent.MOUSE_UP,addGrid);
+				container.addEventListener(MouseEvent.MOUSE_DOWN,startRange);
+			}
+			
+			private function startRange(e:MouseEvent):void
+			{
+				rangeLayer.graphics.clear();
+				_rangeStart = new Point(e.localX,e.localY);
+			}
+			
+			private function addGrid(e:MouseEvent):void
+			{
+				rangeLayer.graphics.clear();
+				if(selectedLayer == -1)
+				{
+					return;
+				}
+				if(_rangeStart == null)
+				{
+					return;
+				}
+				var xStart:int = _rangeStart.x/_realWidth;
+				var yStart:int = _rangeStart.y/_realWidth;
+				var xEnd:int = e.localX/_realWidth;
+				var yEnd:int = e.localY/_realWidth;
+				
+				var bitmap:Bitmap = _layer[selectedLayer];
+				var ld:OneLayerData = _layerData[selectedLayer] as OneLayerData;
+				
+				var xSmall:int = xStart<xEnd?xStart:xEnd;
+				var xBig:int =  xStart>xEnd?xStart:xEnd;
+				var ySmall:int = yStart<yEnd?yStart:yEnd;
+				var yBig:int =  yStart>yEnd?yStart:yEnd;
+				
+				for(var x:int = xSmall;x<=xBig;x++)
+				{
+					for(var y:int = ySmall;y<=yBig;y++)
+					{
+						if(selectedR)
+						{
+							bitmap.bitmapData.copyPixels(selectedR.bitmapData,(new Rectangle(selectedR.x*MapData.instance.gridWidth,selectedR.y*MapData.instance.gridHeight,MapData.instance.gridWidth,MapData.instance.gridHeight))
+								,(new Point(x*MapData.instance.gridWidth,y*MapData.instance.gridHeight)));
+							ld.setxy(x,y,selectedR.id);
+						}else
+						{
+							bitmap.bitmapData.fillRect((new Rectangle(x*MapData.instance.gridWidth,y*MapData.instance.gridHeight,MapData.instance.gridWidth,MapData.instance.gridHeight)),0x000000);
+							ld.setxy(x,y,0);
+						}
+					}
+				}
+				
+				_rangeStart = null;
+			}
+			
+			private function showAll(e:MouseEvent):void
+			{
+				for(var i:int = 0;i<_layer.length;i++)
+				{
+//					layersDisplay.addChild(_layer[i] as Bitmap);
+					(_buttons[i] as Button).enabled = true;
+					(_layer[i] as Bitmap).filters = [];
+				}
+				var s:Sprite = container.getChildByName("mouse") as Sprite;
+				while(s)
+				{
+					s.stopDrag();
+					container.removeChild(s);
+					s = container.getChildByName("mouse") as Sprite;
+				}
+				selectedR = null;
+				(_buttons[_buttons.length - 1] as Button).enabled = false;
+				selectedLayer = -1;
+				
+			}
+			private var selectedLayer:int = 0;
+			private function showLayer(e:MouseEvent):void
+			{
+				var s:Sprite = container.getChildByName("mouse") as Sprite;
+				while(s)
+				{
+					s.stopDrag();
+					container.removeChild(s);
+					s = container.getChildByName("mouse") as Sprite;
+				}
+				selectedR = null;
+				for(var i:int = 0;i<_layer.length;i++)
+				{
+//					layersDisplay.addChild(_layer[i] as Bitmap);
+					(_layer[i] as Bitmap).filters = [];
+					(_buttons[i] as Button).enabled = true;
+				}
+				(_buttons[_buttons.length -1] as Button).enabled = true;
+				var button:Button = e.currentTarget as Button;
+				button.enabled = false;
+//				layersDisplay.addChild(_layer[_buttons.indexOf(button)] as Bitmap)
+				(_layer[_buttons.indexOf(button)] as Bitmap).filters = [new GlowFilter(0xffffff,1,6,6,20)];
+				selectedLayer = _buttons.indexOf(button);
+			}
+
+
+			protected function button1_clickHandler(event:MouseEvent):void
+			{
+				var file:File = new File();
+				file.browseForOpenMultiple("选择资源",[new FileFilter("Images(gif,jpg,png)","*.jpg;*.png;*.jpeg;*.gif")]);
+				file.addEventListener(FileListEvent.SELECT_MULTIPLE,selected);
+			}
+			
+			private var needLoaded:int = 0;
+			private function selected(e:FileListEvent):void
+			{
+				for each(var file:File in e.files)
+				{
+					trace(file.name);
+					var loader:Loader = new Loader();
+					loader.contentLoaderInfo.addEventListener(Event.COMPLETE,LoadCompleted);
+					loader.load(new URLRequest(file.nativePath));
+					needLoaded++;
+				}
+			}
+			
+			private function LoadCompleted(e:Event):void
+			{
+				needLoaded--;
+				
+				
+				var linfo:LoaderInfo = (e.currentTarget as LoaderInfo);
+				var arr:Array = linfo.url.split("/");
+				var fileName:String = arr[arr.length-1];
+				
+				var bitmap:Bitmap = (linfo.content as Bitmap);
+				
+				var wn:int = bitmap.width/MapData.instance.gridWidth;
+				var hn:int = bitmap.height/MapData.instance.gridHeight;
+				
+				
+				if(MapData.instance.resourceDictionary[fileName])
+				{
+					//更新图
+					trace("更新资源");
+					var arr2:Array = [];
+					var maxY:int = 0;
+					for each(var o:Object in MapData.instance.resourceDictionary[fileName])
+					{
+						var r1:Resource = new Resource();
+						r1.bitmapData = bitmap.bitmapData;
+						r1.x = o.x;
+						r1.y = o.y;
+						r1.resourceName = fileName;
+						r1.id = o.id;
+						r1.url = linfo.url;
+						arr2.push(r1);
+						maxY = (maxY<r1.y)?r1.y:maxY;
+					}
+					maxY++;
+					for(var i:int = maxY;i<hn;i++)
+					{
+						for(var j:int = 0;j<wn;j++)
+						{
+							var r2:Resource = new Resource();
+							r2.x = j;
+							r2.y = i;
+							r2.bitmapData = bitmap.bitmapData;
+							r2.resourceName = fileName;
+							r2.id = MapData.instance.getOneNumber();
+							r2.url = linfo.url;
+							arr2.push(r2);
+						}
+					}
+					MapData.instance.resourceDictionary[fileName] = arr2;
+				}else
+				{
+					//完全是新的图
+					var array:Array = [];
+					for(var i1:int = 0;i1<hn;i1++)
+					{
+						for(var j1:int = 0;j1<wn;j1++)
+						{
+							var r21:Resource = new Resource();
+							r21.x = j1;
+							r21.y = i1;
+							r21.bitmapData = bitmap.bitmapData;
+							r21.resourceName = fileName;
+							r21.id = MapData.instance.getOneNumber();
+							r21.url = linfo.url;
+							array.push(r21);
+						}
+					}
+					MapData.instance.resourceDictionary[fileName] = array;
+				}
+				
+				
+				
+				
+				if(needLoaded == 0)
+				{
+					//资源加载结束，初始化资源列表.
+					var arr1:Array = [];
+					for(var s:String in MapData.instance.resourceDictionary)
+					{
+						var a:Array = MapData.instance.resourceDictionary[s];
+						arr1 = arr1.concat(a);
+					}
+					listdata.removeAll();
+					for each(var r3:Object in arr1)
+					{
+						if(r3 is Resource)
+						{
+							listdata.addItem(r3);
+						}
+					}
+					if(loadProject)
+					{
+						this.dispatchEvent(new Event("LoadProjectResourceLoaded"));
+						loadProject = false;
+					}
+					
+				}
+				
+			}
+			
+			private var loadProject:Boolean = false;
+			public function LoadResource(url:String):void
+			{
+				loadProject = true;
+				var loader:Loader = new Loader();
+				loader.contentLoaderInfo.addEventListener(Event.COMPLETE,LoadCompleted);
+				loader.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR,function(e:Event):void
+				{
+					var arr:Array = url.split("\\");
+					var fileName:String = arr[arr.length-1];
+					delete MapData.instance.resourceDictionary[fileName];
+					trace("资源:"+url+"没有");
+					needLoaded--;
+					
+					if(needLoaded == 0)
+					{
+						//资源加载结束，初始化资源列表.
+						var arr1:Array = [];
+						for(var s:String in MapData.instance.resourceDictionary)
+						{
+							var a:Array = MapData.instance.resourceDictionary[s];
+							arr1 = arr1.concat(a);
+						}
+						listdata.removeAll();
+						for each(var r3:Object in arr1)
+						{
+							if(r3 is Resource)
+							{
+								listdata.addItem(r3);
+							}
+						}
+						if(loadProject)
+						{
+							this.dispatchEvent(new Event("LoadProjectResourceLoaded"));
+							loadProject = false;
+						}
+						
+					}
+				});
+				loader.load(new URLRequest(url));
+				needLoaded++;
+			}
+			
+			[Bindable]
+			private var listdata:ArrayCollection = new ArrayCollection();
+			
+			private var _idToResourceDic:Dictionary;
+			public function buildResourceDictionary():void
+			{
+				_idToResourceDic = new Dictionary();
+				for(var s:String in MapData.instance.resourceDictionary)
+				{
+					var a:Array = MapData.instance.resourceDictionary[s];
+					for each(var resource:Resource in a)
+					{
+						_idToResourceDic[resource.id] = resource;
+					}
+				}
+			}
+			
+			public function refreshAllLayer():void
+			{
+				for(var i:int = 0;i<MapData.instance.mapLayer;i++)
+				{
+					setLayerData(i,_layerData[i].data);
+				}
+			}
+			
+			public function setLayerData(layerIndex:int,array:Vector.<int>):void
+			{
+				(_layerData[layerIndex] as OneLayerData).setData(array);
+				for(var i:int = 0 ;i<MapData.instance.mapHeight/MapData.instance.gridHeight;i++)
+				{
+					for(var j:int = 0;j<MapData.instance.mapWidth/MapData.instance.gridWidth;j++)
+					{
+						var res:Resource = _idToResourceDic[(_layerData[layerIndex] as OneLayerData).getId(j,i)];
+						if(res)
+						{
+							//如果res不存在，则此处什么都不填。
+							(_layer[layerIndex] as Bitmap).bitmapData.copyPixels(res.getBitdata(),(new Rectangle(0,0,MapData.instance.gridWidth,MapData.instance.gridHeight)),(new Point(j*MapData.instance.gridWidth,i*MapData.instance.gridHeight)));
+						}
+					}
+				}
+			}
+
+			private var selectedR:Resource;
+			protected function resourceList_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				
+				selectedR = (resourceList.selectedItem as Resource);
+				if(selectedR == null)
+				{
+					return;
+				}
+				if(selectedLayer == -1)
+				{
+					Alert.show("请先选择一个层，再选中资源");
+					return;
+				}
+				while(container.getChildByName("mouse"))
+				{
+					container.removeChild(container.getChildByName("mouse"));
+				}
+				var bit:Bitmap = selectedR.getBitmap();
+				bit.width = bit.height = _realWidth;
+				bit.x = bit.y = -(bit.width/2);
+				var s:Sprite = new Sprite();
+				s.name = "mouse";
+				s.addChild(bit);
+				container.addChild(s);
+				s.x = container.mouseX;
+				s.y = container.mouseY;
+//				s.startDrag(true,(new Rectangle(0,0,_layerWidth,MapData.instance.mapHeight)));
+				s.mouseChildren = s.mouseEnabled = false;
+			}
+
+
+			protected function group1_enterFrameHandler(event:Event):void
+			{
+				if(this.stage == null)
+				{
+					return;
+				}
+				if(_rangeStart && (selectedLayer!= -1))
+				{
+					rangeLayer.graphics.clear();
+					rangeLayer.graphics.lineStyle(1,0xff0000);
+					rangeLayer.graphics.drawRect(_rangeStart.x,_rangeStart.y,container.mouseX-_rangeStart.x,container.mouseY-_rangeStart.y);
+				}
+				// TODO Auto-generated method stub
+				var r:Rectangle = canve.getBounds(this.stage);
+				if(!r.contains(this.stage.mouseX,this.stage.mouseY))
+				{
+					rangeLayer.graphics.clear();
+					_rangeStart = null;
+					return;
+				}
+				var s:DisplayObject = container.getChildByName("mouse");
+				if(s&&(container.mouseX<_layerWidth && container.mouseY<MapData.instance.mapHeight))
+				{
+					s.x = int(container.mouseX/_realWidth)*_realWidth+_realWidth*0.5;
+					s.y = int(container.mouseY/_realWidth)*_realWidth+_realWidth*0.5;
+				}
+				
+			}
+
+			
+			protected function button2_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				selectedR = null;
+				var s:Sprite = container.getChildByName("mouse") as Sprite;
+				while(s)
+				{
+					s.stopDrag();
+					container.removeChild(s);
+					s = container.getChildByName("mouse") as Sprite;
+				}
+			}
+
+
+			protected function button3_clickHandler(event:MouseEvent=null):void
+			{
+				// TODO Auto-generated method stub
+				var file:File = new File();
+				file.browseForDirectory("选择保存目录");
+				file.addEventListener(Event.SELECT,save);
+			}
+			
+			private function save(e:Event):void
+			{
+				trace(e);
+				var file:File = e.target as File;
+				var mapPath:File = file.resolvePath("mapdata.map");
+				var byte:ByteArray = new ByteArray();
+				
+				byte.writeInt(MapData.instance.mapWidth);
+				byte.writeInt(MapData.instance.mapHeight);
+				byte.writeInt(MapData.instance.gridWidth);
+				byte.writeInt(MapData.instance.gridHeight);
+				byte.writeInt(MapData.instance.mapLayer);
+				byte.writeInt(MapData.instance.getOneNumber());
+				byte.writeObject(MapData.instance.resourceDictionary);
+				
+				for(var i:int = 0;i<MapData.instance.mapLayer;i++)
+				{
+					var ld:OneLayerData = _layerData[i] as OneLayerData;
+					byte.writeObject(ld);
+				}
+				
+				///将资源复制到目标目录.
+				for(var s:String in MapData.instance.resourceDictionary)
+				{
+					var r:Resource = MapData.instance.resourceDictionary[s][0] as Resource;
+					var f:File = new File(r.url);
+					var oldFile:File = file.resolvePath(r.resourceName);
+					if(f.url != oldFile.url)
+					{
+						f.copyTo(file.resolvePath(r.resourceName),true);
+					}
+					
+				}
+				
+				byte.writeBoolean(MapData.instance.havePassableLayer);
+				
+				byte.compress();
+				var ms:FileStream = new FileStream();
+				ms.open(mapPath,FileMode.WRITE);
+				ms.writeBytes(byte);
+				ms.close();
+			}
+
+
+			protected function button4_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				var title:Panel = new Panel();
+				title.title = "预览";
+				
+				var yulanComponent:UIComponent = new UIComponent();
+				title.width = this.stage.stageWidth;
+				title.height = this.stage.stageHeight;
+				
+				title.addElement(yulanComponent);
+				
+				var bitmapd:BitmapData = new BitmapData(this.stage.stageWidth,this.stage.stageHeight);
+				var scale:Number = this.stage.stageWidth/MapData.instance.mapWidth<this.stage.stageHeight/MapData.instance.mapHeight?this.stage.stageWidth/MapData.instance.mapWidth:this.stage.stageHeight/MapData.instance.mapHeight;
+				
+				bitmapd.draw(container,(new Matrix(scale,0,0,scale)));
+
+				var bitmap:Bitmap = new Bitmap(bitmapd);
+				yulanComponent.addChild(bitmap);
+				
+				var close:Button = new Button();
+				close.x = title.width-80;
+				close.label = "关闭";
+				title.addElement(close);
+				
+				
+				close.addEventListener(MouseEvent.CLICK,function(e:MouseEvent):void
+				{
+					PopUpManager.removePopUp(title);
+				});
+				
+				PopUpManager.addPopUp(title,this);
+				
+			}
+			
+			protected function buildProject(e:MouseEvent):void
+			{
+				var window:BuildingSetting = new BuildingSetting();
+				window.callback = buildddd;
+				PopUpManager.addPopUp(window,this,true);
+			}
+			protected function buildddd():void
+			{
+				var file:File = new File();
+				file.browseForSave("保存文件");
+				file.addEventListener(Event.SELECT,build);
+			}
+			private function build(e:Event):void
+			{
+				var file:File = e.currentTarget as File;
+				//此图使用的资源的id.
+				var usedResource:Dictionary = new Dictionary();
+				var newIndex:int = 1;
+				var newLayers:Array = [];
+				
+				buildResourceDictionary();
+				for(var i:int = 0;i<MapData.instance.mapLayer;i++)
+				{
+					var l:OneLayerData = _layerData[i];
+					var nl:OneLayerData = new OneLayerData(MapData.instance.mapWidth/MapData.instance.gridWidth,MapData.instance.mapHeight/MapData.instance.gridHeight);
+					
+					for(var m:int = 0;m<MapData.instance.mapWidth/MapData.instance.gridWidth;m++)
+					{
+						for(var k:int = 0;k<MapData.instance.mapHeight/MapData.instance.gridHeight;k++)
+						{
+							var id:int = l.getId(m,k);
+							if(usedResource[id] != null)
+							{
+								nl.setxy(m,k,usedResource[id]);
+							}else
+							{
+								if(id!=0)
+								{
+									usedResource[id] = newIndex++;
+								}else
+								{
+									usedResource[id] = 0;
+								}
+								nl.setxy(m,k,usedResource[id]);
+							}
+						}
+					}
+					newLayers.push(nl);
+				}
+				
+				var newIdToOldId:Dictionary = new Dictionary();
+				for(var oldid:String in usedResource)
+				{
+					newIdToOldId[usedResource[oldid]] = oldid;
+				}
+				var bitdata:BitmapData = new BitmapData(MapData.instance.gridWidth*5,Math.ceil(newIndex/5)*MapData.instance.gridHeight,true);
+				var start:int = 0;
+				for(var s:String in newIdToOldId)
+				{
+					var resource:Resource = _idToResourceDic[newIdToOldId[s]];
+					if(resource == null)
+					{
+						continue;
+					}
+					bitdata.copyPixels(resource.getBitdata(),(new Rectangle(0,0,MapData.instance.gridWidth,MapData.instance.gridHeight)),new Point((start%5)*MapData.instance.gridWidth,int(start/5)*MapData.instance.gridHeight));
+					start++;
+				}
+				var encoder:PNGEncoder = new PNGEncoder();
+				var pngByteArray:ByteArray = encoder.encode(bitdata);
+				
+				var resultByteArray:ByteArray = new ByteArray();
+				resultByteArray.writeUnsignedInt(pngByteArray.length);
+				resultByteArray.writeBytes(pngByteArray);
+				
+				resultByteArray.writeInt(MapData.instance.mapWidth);
+				resultByteArray.writeInt(MapData.instance.mapHeight);
+				resultByteArray.writeInt(MapData.instance.gridWidth);
+				resultByteArray.writeInt(MapData.instance.gridHeight);
+				if(MapData.instance.havePassableLayer)
+				{
+					resultByteArray.writeInt((MapData.instance.mapLayer-1));
+				}else
+				{
+					resultByteArray.writeInt(MapData.instance.mapLayer);
+				}
+				
+				var layers:int = MapData.instance.mapLayer;
+				if(MapData.instance.havePassableLayer)
+				{
+					layers--;
+				}
+				for(var ll:int = 0;ll<layers;ll++)
+				{
+					resultByteArray.writeObject(newLayers[ll] as OneLayerData);
+				}
+				
+				resultByteArray.compress();
+//				var file:File = File.desktopDirectory.resolvePath("map0.rm");
+				var fs:FileStream = new FileStream();
+				fs.open(file,FileMode.WRITE);
+				fs.writeBytes(resultByteArray);
+				fs.close();
+				if(MapData.instance.havePassableLayer)
+				{
+					buildPassableFile(file.parent,file.name.split(".")[0]);
+				}
+			}
+			
+			private static const NoPassAble:uint = 0xff0000;
+			private static const Sea:uint = 0x000000;
+			
+			
+			private function buildPassableFile(dir:File,name:String):void
+			{
+				var array:Array = [];
+				var bitmap:Bitmap = _layer[_layer.length-1];
+				bitmap.alpha = 1;
+				var w:int = MapData.instance.mapWidth/MapData.instance.gridWidth;
+				var h:int = MapData.instance.mapHeight/MapData.instance.gridHeight;
+				var text:String = "";
+				for(var i:int = 0;i<h;i++)
+				{
+					var line:Array = [];
+					for(var j:int = 0;j<w;j++)
+					{
+						var c:uint = bitmap.bitmapData.getPixel(j*MapData.instance.gridWidth+MapData.instance.gridWidth/2,i*MapData.instance.gridHeight+MapData.instance.gridHeight/2);
+						switch(c)
+						{
+							case NoPassAble:
+								line.push(0);
+								break;
+							case Sea:
+							case 0xffffff:
+								line.push(1);
+								break;
+							case 0x00ff00:
+								line.push(2);
+								break;
+							default:
+								trace("第"+i+"行,第"+j+"列的颜色不能解析"+c.toString(16));
+								break;
+						}
+						var cs:String = c.toString(16);
+						if(cs.length < 6)
+						{
+							var cs1:String = "000000";
+							cs1 = cs1.substr(0,6-cs.length);
+							cs = cs1+cs;
+						}
+						text += i+","+j+","+cs+"\n";
+					}
+					array.push(line);
+				}
+				var outPutFile:File;
+				var fileStream:FileStream;
+				outPutFile = dir.resolvePath(name+".map");
+				fileStream = new FileStream();
+				fileStream.open(outPutFile,FileMode.WRITE);
+				
+				////写数据
+				var byteA:ByteArray = new ByteArray();
+				byteA.writeObject(array);
+				byteA.compress();
+				fileStream.writeBytes(byteA,0,byteA.length);
+				fileStream.close();
+				var outPutFile1:File;
+				var fileStream1:FileStream;
+				outPutFile1 = dir.resolvePath(name+".txt");
+				fileStream1 = new FileStream();
+				fileStream1.open(outPutFile1,FileMode.WRITE);
+				
+				////写数据
+				fileStream1.writeUTF(text);
+				fileStream1.close();
+				
+				bitmap.alpha = 0.2;
+			}
+
+
+			protected function button5_clickHandler(event:MouseEvent):void
+			{
+				grid.visible = !grid.visible;
+			}
+			
+			protected function button6_clickHandler(event:MouseEvent):void
+			{
+				position.visible = !position.visible;
+			}
+			
+			protected function saveAsPng(e:MouseEvent):void
+			{
+				var file:File = new File();
+				file.browseForSave("生成一个png");
+				file.addEventListener(Event.SELECT,savePng);
+			}
+			private function savePng(e:Event):void
+			{
+				var file:File = e.target as File;
+				var bitmapda:BitmapData = new BitmapData(MapData.instance.mapWidth,MapData.instance.mapHeight,true,0x00ff00);
+//				grid.visible = false;
+				bitmapda.draw(container);
+//				grid.visible = true;
+				var fs:FileStream = new FileStream();
+				fs.open(file,FileMode.WRITE);
+				var encoder:PNGEncoder = new PNGEncoder();
+				fs.writeBytes(encoder.encode(bitmapda));
+				fs.close();
+			}
+
+		]]>
+	</fx:Script>
+	<fx:Declarations>
+		<!-- 将非可视元素（例如服务、值对象）放在此处 -->
+	</fx:Declarations>
+	
+	<s:VGroup top="10" width="100%" height="100%">
+		<s:HGroup width="100%">
+			<s:HGroup  width="70%" height="12" id="group1" horizontalAlign="center">
+				
+			</s:HGroup>
+			<s:HGroup width="30%" horizontalAlign="center">
+				<s:Button  label="辅助线" toolTip="(显示/隐藏)辅助线" click="button5_clickHandler(event)"/>
+				<s:Button  label="位置"  toolTip="(显示/隐藏)位置" click="button6_clickHandler(event)"/>
+				<s:Button  label="清除"  click="button2_clickHandler(event)" toolTip="清除一个格子"/>
+				<s:Button  label="保存项目"  click="button3_clickHandler(event)" toolTip="保存项目到文件夹"/>
+				<s:Button  label="预览" click="button4_clickHandler(event)" toolTip="预览当前的图"/>
+				<s:Button  label="生成png" click="saveAsPng(event)" toolTip="生成一张png格式的图"/>
+				<s:Button  label="生成" click="buildProject(event)" toolTip="将资源打包到地图中，生成一张地图。"/>
+				<s:Button  label="加载资源" click="button1_clickHandler(event)" toolTip="加载资源到资源列表中"/>
+			</s:HGroup>
+		</s:HGroup>
+		<s:HGroup gap="10" width="100%" height="95%">
+			<s:Scroller width="80%" height="100%"  id="canve">
+				<s:Group>
+					<mx:UIComponent id="uic" width="{MapData.instance.mapWidth+30}" height="{MapData.instance.mapHeight+40}">
+					</mx:UIComponent>
+				</s:Group>
+			</s:Scroller>
+			<s:List  width="246" height="100%" id="resourceList" itemRenderer="ResourceRender" dataProvider="{listdata}" click="resourceList_clickHandler(event)">
+				<s:layout>
+					<s:TileLayout horizontalGap="0" verticalGap="0">
+						
+					</s:TileLayout>
+				</s:layout>
+			</s:List>
+		</s:HGroup>
+	</s:VGroup>
+	
+	
+</s:Group>

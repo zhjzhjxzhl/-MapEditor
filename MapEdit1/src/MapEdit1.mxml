@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   width="1100"
+					   height = "800"
+					   backgroundColor="0x888888">
+
+	<fx:Script>
+		<![CDATA[
+			import mx.controls.Alert;
+			import mx.core.UIComponent;
+			import mx.events.FlexEvent;
+			import mx.managers.PopUpManager;
+			
+			import spark.components.Panel;
+
+			protected function Btn_Ok_clickHandler(event:MouseEvent):void
+			{
+//				var b:BitmapData = new BitmapData(100,100,true,0x0);
+//				b.fillRect((new Rectangle(5,5,10,10)),0xffff0000);
+//				var by:ByteArray = b.getPixels(new Rectangle(0,0,10,10));
+//				by.position = 0;
+//				while(by.po)
+//				{
+//					if(by.readUnsignedInt()>0)
+//					{
+//						
+//						trace("有数据");
+//						break;
+//					}
+//				}
+				// TODO Auto-generated method stub
+				MapData.instance.gridWidth = int(GridWidth.text);
+				MapData.instance.gridHeight = int(GridHeight.text);
+				MapData.instance.mapHeight = int(MapHeight.text);
+				MapData.instance.mapWidth = int(MapWidth.text);
+				MapData.instance.mapLayer = int(Layer.text);
+				MapData.instance.havePassableLayer = true;
+				group1.visible = false;
+				var edite:EditLayer = new EditLayer();
+				this.addElement(edite);
+			}
+
+			protected function button1_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				var f:File = new File();
+				f.browseForDirectory("工程文件夹");
+				f.addEventListener(Event.SELECT,OpenOneProject);
+			}
+			
+			private function OpenOneProject(e:Event):void
+			{
+				var f:File = e.target as File;
+				var dataFile:File = f.resolvePath("mapdata.map");
+				var fs:FileStream = new FileStream();
+				try
+				{
+					fs.open(dataFile,FileMode.READ);
+				}catch(e:Error)
+				{
+					Alert.show("文件夹选择错误，请检查 mapdata.map 文件是否存在","错误");
+					return;
+				}
+				var data:ByteArray = new ByteArray();
+				fs.readBytes(data);
+				fs.close();
+				data.uncompress();
+				
+				MapData.instance.mapWidth = data.readInt();
+				MapData.instance.mapHeight = data.readInt();
+				MapData.instance.gridWidth = data.readInt();
+				MapData.instance.gridHeight = data.readInt();
+				MapData.instance.mapLayer = data.readInt();
+				MapData.instance.setNumber(data.readInt());
+				MapData.instance.resourceDictionary = data.readObject();
+				
+				var layers:Array = [];
+				for(var i:int = 0; i<MapData.instance.mapLayer;i++)
+				{
+					if(data.bytesAvailable == 0)
+					{
+						break;
+					}
+					var layer:Object = data.readObject();
+					layers.push(layer);
+				}
+				if(data.bytesAvailable>0)
+				{
+					MapData.instance.havePassableLayer = data.readBoolean();
+				}
+				
+				var el:EditLayer = new EditLayer();
+				group1.visible = false;
+				this.addElement(el);
+				
+				for(var s:String in MapData.instance.resourceDictionary)
+				{
+					var rf:File = f.resolvePath(s);
+					if(rf)
+					{
+						el.LoadResource(rf.nativePath);
+					}
+				}
+				el.addEventListener("LoadProjectResourceLoaded",function(e:Event):void
+				{
+					el.buildResourceDictionary();
+					
+					for(var i:int = 0; i<MapData.instance.mapLayer;i++)
+					{
+						var layer:Object = layers[i];
+						if(layer == null)
+						{
+							break;
+						}
+						el.setLayerData(i,layer.data);
+					}
+					
+				});
+			}
+
+
+			protected function button2_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				var f:File = new File();
+				f.browseForOpen("选择文件",[new FileFilter("资源地图文件(rm)","*.rm")]);
+				f.addEventListener(Event.SELECT,OpenOneRm);
+			}
+			private function OpenOneRm(e:Event):void
+			{
+				var f:File = e.target as File;
+				var fs:FileStream = new FileStream();
+				fs.open(f,FileMode.READ);
+				var rmdata:ByteArray = new ByteArray();
+				fs.readBytes(rmdata);
+				fs.close();
+				rmdata.uncompress();
+				
+				var length:uint = rmdata.readUnsignedInt();
+				var bitmapArray:ByteArray = new ByteArray();
+				rmdata.readBytes(bitmapArray,0,length);
+				var loader:Loader = new Loader();
+				var self:DisplayObject = this;
+				loader.contentLoaderInfo.addEventListener(Event.COMPLETE,function(e:Event):void
+				{
+					var bitdata:BitmapData = (loader.content as Bitmap).bitmapData;
+					var mapWidth:int = rmdata.readInt();
+					var mapHeight:int = rmdata.readInt();
+					var gridWidth:int = rmdata.readInt();
+					var gridHeight:int = rmdata.readInt();
+					var layers:int = rmdata.readInt();
+					
+					var bitmap:Bitmap = new Bitmap(new BitmapData(mapWidth,mapHeight,false));
+					bitmap.bitmapData.lock();
+					for(var i:int = 0;i<layers;i++)
+					{
+						var ld:Object = rmdata.readObject();
+						var lddata:Vector.<int> = ld.data;
+						for(var h:int = 0;h<mapHeight/gridHeight;h++)
+						{
+							for(var w:int = 0;w<mapWidth/gridWidth;w++)
+							{
+								var id:int = lddata[h*(mapWidth/gridWidth)+w];
+								if(id == 0)
+								{
+									continue;
+								}
+								id--;
+								bitmap.bitmapData.copyPixels(bitdata,(new Rectangle((id%5)*gridWidth,int(id/5)*gridHeight,gridWidth,gridHeight)),(new Point(w*gridWidth,h*gridHeight)));
+							}
+						}
+					}
+					bitmap.bitmapData.unlock();
+					
+//					stage.addChild(loader);
+					
+					var scale:Number = stage.stageWidth/mapWidth<stage.stageHeight/mapHeight?stage.stageWidth/mapWidth:stage.stageHeight/mapHeight;
+					bitmap.scaleX = bitmap.scaleY = scale;
+					stage.addChild(bitmap);
+					
+//					var title:Panel = new Panel();
+//					title.title = "预览";
+//					
+//					var yulanComponent:UIComponent = new UIComponent();
+//					title.width = stage.stageWidth;
+//					title.height = stage.stageHeight;
+//					
+//					title.addElement(yulanComponent);
+//					
+//					yulanComponent.addChild(bitmap);
+//					
+//					var close:Button = new Button();
+//					close.x = title.width-80;
+//					close.label = "关闭";
+//					title.addElement(close);
+//					
+//					
+//					close.addEventListener(MouseEvent.CLICK,function(e:MouseEvent):void
+//					{
+//						PopUpManager.removePopUp(title);
+//					});
+//					
+//					PopUpManager.addPopUp(title,self);
+					
+				});
+				loader.loadBytes(bitmapArray);
+			}
+
+		]]>
+	</fx:Script>
+
+	<fx:Declarations>
+		<!-- 将非可视元素（例如服务、值对象）放在此处 -->
+	</fx:Declarations>
+	<s:Group id="group1" width="538" height="444">
+		<!--<mx:MenuBar labelField="@label">
+			<mx:dataProvider>
+				<fx:XMLList>
+						<menuitem label="MenuItem A" icon="myTopIcon">
+							<menuitem label="SubMenuItem A-1" />
+							<menuitem label="SubMenuItem A-2"/>
+						</menuitem>
+						<menuitem label="MenuItem B" type="check" toggled="true"/>
+						<menuitem label="MenuItem C" type="check" toggled="false" icon="myTopIcon"/>
+						<menuitem type="separator"/> 
+						<menuitem label="MenuItem D" icon="myTopIcon">
+							<menuitem label="SubMenuItem D-1" type="radio" groupName="one"/>
+							<menuitem label="SubMenuItem D-2" type="radio" groupName="one" toggled="true"/>
+							<menuitem label="SubMenuItem D-3" type="radio" groupName="one"/>
+						</menuitem>
+				</fx:XMLList>
+			</mx:dataProvider>
+		</mx:MenuBar>-->
+		<s:Label x="60" y="58" text="格子尺寸" width="73" height="21" fontSize="15"/>
+		<s:Label x="141" y="58" text="长："/>
+		<s:TextInput x="173" y="48" text="40" id="GridWidth"/>
+		<s:Label x="141" y="83" text="高："/>
+		<s:TextInput x="173" y="78" text="40" id="GridHeight"/>
+		<s:Label x="62" y="145" text="地图尺寸" width="73" height="21" fontSize="15"/>
+		<s:Label x="143" y="145" text="长："/>
+		<s:TextInput x="175" y="135" text="320" id="MapWidth"/>
+		<s:Label x="143" y="170" text="高："/>
+		<s:Label x="132" y="234" text="层数：" width="47" toolTip="地图分为几层"/>
+		<s:TextInput x="175" y="165" text="200" id="MapHeight"/>
+		<s:TextInput x="175" y="228" text="6" id="Layer"/>
+		<s:Button x="132" y="369" label="确定" id="Btn_Ok" click="Btn_Ok_clickHandler(event)"/>
+		<s:Button x="418" y="47" label="打开项目" click="button1_clickHandler(event)"/>
+		<s:Button x="418" y="83" label="预览生成的rm" click="button2_clickHandler(event)"/>
+	</s:Group>
+</s:WindowedApplication>
